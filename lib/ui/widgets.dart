@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -531,4 +532,31 @@ class _ItemImageState extends State<ItemImage> {
       },
     );
   }
+}
+
+/// The user's own photo shown whole (nothing cropped). The space around it is filled
+/// with a soft, blurred copy of the same photo, so portrait and landscape shots both look right.
+class FittedPhoto extends StatelessWidget {
+  const FittedPhoto(this.ref, {super.key, required this.height});
+  final String ref;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: height,
+    width: double.infinity,
+    child: ClipRect(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          ImageFiltered(
+            imageFilter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            child: ItemImage(ref, height: height),
+          ),
+          const ColoredBox(color: Color(0x33000000)),
+          ItemImage(ref, height: height, fit: BoxFit.contain),
+        ],
+      ),
+    ),
+  );
 }

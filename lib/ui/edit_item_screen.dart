@@ -1488,9 +1488,9 @@ class _PhotoPicker extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = context.palette;
     final own = picked != null
-        ? ItemImage(picked!.path, height: 220)
+        ? FittedPhoto(picked!.path, height: 240)
         : saved != null
-        ? ItemImage(saved!, height: 220)
+        ? FittedPhoto(saved!, height: 240)
         : null;
     Widget? product(double h, {BoxFit fit = BoxFit.contain}) =>
         officialBytes != null

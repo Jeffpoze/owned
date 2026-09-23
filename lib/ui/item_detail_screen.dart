@@ -129,15 +129,12 @@ class _IdentityTagState extends State<_IdentityTag> {
                 builder: (_) {
                   final ref = images[_which % images.length];
                   final official = ref == it.officialImage;
+                  if (!official) return FittedPhoto(ref, height: 280);
                   return Container(
-                    color: official ? Colors.white : null,
-                    padding: official ? const EdgeInsets.all(16) : null,
-                    height: 240,
-                    child: ItemImage(
-                      ref,
-                      height: 240,
-                      fit: official ? BoxFit.contain : BoxFit.cover,
-                    ),
+                    color: Colors.white,
+                    padding: const EdgeInsets.all(16),
+                    height: 280,
+                    child: ItemImage(ref, height: 280, fit: BoxFit.contain),
                   );
                 },
               ),
