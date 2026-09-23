@@ -2,38 +2,52 @@ group = "com.jeffpoze.owned.textreader"
 version = "0.1.0"
 
 buildscript {
-    ext.kotlin_version = "2.1.0"
+    val kotlinVersion = "2.4.0"
     repositories {
         google()
         mavenCentral()
     }
     dependencies {
-        classpath("com.android.tools.build:gradle:8.7.3")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version")
+        classpath("com.android.tools.build:gradle:9.1.0")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion")
     }
 }
 
-rootProject.allprojects {
+allprojects {
     repositories {
         google()
         mavenCentral()
     }
 }
 
-apply plugin: "com.android.library"
-apply plugin: "kotlin-android"
+plugins {
+    id("com.android.library")
+}
 
 android {
     namespace = "com.jeffpoze.owned.textreader"
-    compileSdk = 35
+    compileSdk = 36
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
-    sourceSets { main.java.srcDirs += "src/main/kotlin" }
-    defaultConfig { minSdk = 21 }
+
+    sourceSets {
+        getByName("main") {
+            java.srcDirs("src/main/kotlin")
+        }
+    }
+
+    defaultConfig {
+        minSdk = 24
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    }
 }
 
 dependencies {
