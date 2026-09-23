@@ -149,6 +149,7 @@ class ItemsStore extends ChangeNotifier {
       final photos = [
         it?.userPhoto,
         it?.officialImage,
+        ...?it?.evidence.map((e) => e.assetId),
       ].whereType<String>().where(_isStored).toList();
       if (photos.isNotEmpty) unawaited(_removePhotos(photos));
     }

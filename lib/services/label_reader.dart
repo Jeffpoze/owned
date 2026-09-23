@@ -2,6 +2,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:text_reader/text_reader.dart';
 
 import '../domain/label_parser.dart';
+import '../domain/receipt_parser.dart';
 
 /// Reads a photo of a product label on the device: the printed text (Apple Vision
 /// on iOS, Google ML Kit on Android) and any barcodes in the picture.
@@ -27,3 +28,7 @@ Future<LabelFields> readLabelPhoto(String imagePath) async {
     await scanner.dispose();
   }
 }
+
+/// Reads a photo of a receipt on the device.
+Future<ReceiptFields> readReceiptPhoto(String imagePath) async =>
+    parseReceipt(await recognizeText(imagePath).catchError((_) => ''));

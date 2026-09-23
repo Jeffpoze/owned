@@ -29,14 +29,7 @@ public class TextReaderPlugin: NSObject, FlutterPlugin {
         return
       }
       let observations = (request.results as? [VNRecognizedTextObservation]) ?? []
-      // Vision's y axis points up: sort top to bottom, then left to right.
-      let lines = observations
-        .sorted {
-          abs($0.boundingBox.midY - $1.boundingBox.midY) > 0.01
-            ? $0.boundingBox.midY > $1.boundingBox.midY
-            : $0.boundingBox.minX < $1.boundingBox.minX
-        }
-        .compactMap { $0.topCandidates(1).first?.string }
+      let lines = TextReaderPlugin.rows(observations)
       DispatchQueue.main.async { result(lines.joined(separator: "\n")) }
     }
     request.recognitionLevel = .accurate
@@ -52,6 +45,29 @@ public class TextReaderPlugin: NSObject, FlutterPlugin {
           result(FlutterError(code: "recognition_failed", message: error.localizedDescription, details: nil))
         }
       }
+    }
+  }
+}
+
+extension TextReaderPlugin {
+  /// Joins pieces of text that sit on the same printed row (a receipt's item on the left
+  /// and its price on the right), then orders rows top to bottom.
+  static func rows(_ observations: [VNRecognizedTextObservation]) -> [String] {
+    // Vision's y axis points up, so higher midY means nearer the top.
+    let sorted = observations.sorted { $0.boundingBox.midY > $1.boundingBox.midY }
+    var rows: [[VNRecognizedTextObservation]] = []
+    for o in sorted {
+      if let last = rows.last?.last,
+         abs(last.boundingBox.midY - o.boundingBox.midY) < min(last.boundingBox.height, o.boundingBox.height) * 0.5 {
+        rows[rows.count - 1].append(o)
+      } else {
+        rows.append([o])
+      }
+    }
+    return rows.map { row in
+      row.sorted { $0.boundingBox.minX < $1.boundingBox.minX }
+        .compactMap { $0.topCandidates(1).first?.string }
+        .joined(separator: "  ")
     }
   }
 }

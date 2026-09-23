@@ -11,6 +11,7 @@ import '../domain/constants.dart';
 import '../domain/dates.dart';
 import '../domain/label_parser.dart';
 import '../domain/models.dart';
+import '../domain/receipt_parser.dart';
 import '../services/catalog.dart';
 import '../services/label_reader.dart';
 import '../state/items_store.dart';
@@ -272,7 +273,8 @@ class _EditItemScreenState extends State<EditItemScreen> {
     await _applyLabel(parseLabel('', barcodes: [code]));
   }
 
-  Future<void> _photographLabel() async {
+  /// Asks camera or library, then returns the photo (or null if cancelled or unavailable).
+  Future<XFile?> _photoOf(String what) async {
     final source = await showModalBottomSheet<ImageSource>(
       context: context,
       showDragHandle: true,
@@ -282,22 +284,21 @@ class _EditItemScreenState extends State<EditItemScreen> {
           children: [
             ListTile(
               leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('Take a photo of the label'),
+              title: Text('Take a photo of the $what'),
               onTap: () => Navigator.pop(ctx, ImageSource.camera),
             ),
             ListTile(
               leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Choose a photo of the label'),
+              title: Text('Choose a photo of the $what'),
               onTap: () => Navigator.pop(ctx, ImageSource.gallery),
             ),
           ],
         ),
       ),
     );
-    if (source == null || !mounted) return;
-    XFile? file;
+    if (source == null || !mounted) return null;
     try {
-      file = await ImagePicker().pickImage(
+      return await ImagePicker().pickImage(
         source: source,
         maxWidth: 2400,
         maxHeight: 2400,
@@ -310,8 +311,12 @@ class _EditItemScreenState extends State<EditItemScreen> {
           warn: true,
         );
       }
-      return;
+      return null;
     }
+  }
+
+  Future<void> _photographLabel() async {
+    final file = await _photoOf('label');
     if (file == null || !mounted) return;
     setState(() => _scanning = true);
     _setStatus('Reading the label…');
@@ -319,6 +324,136 @@ class _EditItemScreenState extends State<EditItemScreen> {
     if (!mounted) return;
     await _applyLabel(fields);
   }
+
+  // ---- receipt ----
+
+  /// A receipt photo taken in this session, saved as proof when the item is saved.
+  XFile? _receiptFile;
+
+  Future<void> _photographReceipt() async {
+    final file = await _photoOf('receipt');
+    if (file == null || !mounted) return;
+    _hideSuggestions();
+    setState(() => _scanning = true);
+    _setStatus('Reading the receipt…');
+    final r = await readReceiptPhoto(file.path);
+    if (!mounted) return;
+    setState(() {
+      _scanning = false;
+      _receiptFile = file;
+    });
+    await _applyReceipt(r);
+  }
+
+  Future<void> _applyReceipt(ReceiptFields r) async {
+    final filled = <String>[];
+    final isNew = !_used;
+
+    // The receipt itself is strong proof, whatever could be read from it.
+    if (!_draft.evidence.any((e) => e.kind == EvidenceKind.receipt)) {
+      _set(
+        (d) => d.copyWith(
+          evidence: [...d.evidence, const Evidence(EvidenceKind.receipt)],
+        ),
+      );
+    }
+    if (r.retailer != null) {
+      (isNew ? _retailer : _originalRetailer).text = r.retailer!;
+      filled.add('store');
+    }
+    if (r.date != null) {
+      final iso = toIsoDate(r.date!);
+      _set(
+        (d) => isNew
+            ? d.copyWith(acquired: iso)
+            : d.copyWith(originalPurchase: iso),
+      );
+      filled.add('date');
+    }
+
+    var line = pickLine(r.lines, name: _name.text, model: _model.text);
+    if (line == null && r.lines.length > 1) {
+      line = await _chooseReceiptLine(r.lines);
+    }
+    if (!mounted) return;
+    if (line != null) {
+      if (isNew) {
+        _price.text = _numText(line.price);
+        filled.add('price');
+      }
+      if (_name.text.trim().isEmpty) {
+        _name.text = line.description;
+        filled.add('name');
+      }
+    }
+    if (isNew && r.returnDays != null) {
+      _returnDays.text = '${r.returnDays}';
+      filled.add('return window');
+    }
+    if (r.warrantyMonths != null) {
+      _warrantyMonths.text = '${r.warrantyMonths}';
+      _set((d) => d.copyWith(warrantySource: WarrantySource.receipt));
+      filled.add('warranty');
+    }
+
+    if (filled.isEmpty) {
+      _setStatus(
+        "Couldn't read that receipt. It's still saved as proof; fill in the details yourself, "
+        'or try a flatter, sharper photo.',
+        warn: true,
+      );
+    } else {
+      final list = filled.length == 1
+          ? filled.first
+          : '${filled.sublist(0, filled.length - 1).join(', ')} and ${filled.last}';
+      _setStatus(
+        'Filled in $list, and saved the receipt as proof. Check them before saving.',
+      );
+    }
+  }
+
+  /// Several items on the receipt and nothing to match them against: ask which one this is.
+  Future<ReceiptLine?> _chooseReceiptLine(List<ReceiptLine> lines) =>
+      showModalBottomSheet<ReceiptLine>(
+        context: context,
+        showDragHandle: true,
+        isScrollControlled: true,
+        builder: (ctx) => SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(ctx).height * 0.7,
+            ),
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+                  child: Text(
+                    'Which item on the receipt is this?',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 17),
+                  ),
+                ),
+                for (final l in lines)
+                  ListTile(
+                    title: Text(l.description),
+                    trailing: Text(
+                      money(l.price),
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    onTap: () => Navigator.pop(ctx, l),
+                  ),
+                ListTile(
+                  title: Text(
+                    'None of these',
+                    style: TextStyle(color: ctx.palette.ink2),
+                  ),
+                  onTap: () => Navigator.pop(ctx),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
 
   /// Fills the form from a label or barcode, then looks the product up for its name and picture.
   Future<void> _applyLabel(LabelFields f) async {
@@ -434,9 +569,25 @@ class _EditItemScreenState extends State<EditItemScreen> {
     if (_officialBytes != null) {
       official = await store.storePhoto(_draft.id, _officialBytes!);
     }
+    // The receipt photo goes with the "Original receipt" proof, if that's still ticked.
+    final oldReceipt = _draft.evidence
+        .where((e) => e.kind == EvidenceKind.receipt)
+        .firstOrNull
+        ?.assetId;
+    String? receipt = oldReceipt;
+    final keepsReceipt = _draft.evidence.any(
+      (e) => e.kind == EvidenceKind.receipt,
+    );
+    if (_receiptFile != null && keepsReceipt) {
+      receipt = await store.storePhoto(
+        _draft.id,
+        await _receiptFile!.readAsBytes(),
+      );
+    }
     if (!mounted) return;
     if ((_picked != null && photo == null) ||
-        (_officialBytes != null && official == null)) {
+        (_officialBytes != null && official == null) ||
+        (_receiptFile != null && keepsReceipt && receipt == null)) {
       setState(() => _saving = false);
       toast(
         context,
@@ -445,6 +596,12 @@ class _EditItemScreenState extends State<EditItemScreen> {
       return;
     }
     final it = _draft.copyWith(
+      evidence: [
+        for (final e in _draft.evidence)
+          e.kind == EvidenceKind.receipt
+              ? Evidence(EvidenceKind.receipt, assetId: receipt)
+              : e,
+      ],
       userPhoto: photo,
       officialImage: official,
       name: name,
@@ -488,30 +645,16 @@ class _EditItemScreenState extends State<EditItemScreen> {
         _existing!.officialImage != official) {
       store.discardPhoto(_existing.officialImage);
     }
+    final savedReceipt = it.evidence
+        .where((e) => e.kind == EvidenceKind.receipt)
+        .firstOrNull
+        ?.assetId;
+    if (oldReceipt != null && oldReceipt != savedReceipt) {
+      store.discardPhoto(oldReceipt);
+    }
     toast(context, _existing == null ? 'Added $name' : 'Saved');
     context.pop();
   }
-
-  void _scanSoon(String what) => showAdaptiveDialog<void>(
-    context: context,
-    builder: (ctx) => AlertDialog.adaptive(
-      title: Text('$what scanning is coming'),
-      content: const Text(
-        'It arrives in the next build. Fill in the details below for now.',
-      ),
-      actions: [
-        Theme.of(ctx).platform == TargetPlatform.iOS
-            ? CupertinoDialogAction(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('OK'),
-              )
-            : TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('OK'),
-              ),
-      ],
-    ),
-  );
 
   Widget _suggestionList() => _Suggestions(
     searching: _searching,
@@ -585,8 +728,8 @@ class _EditItemScreenState extends State<EditItemScreen> {
                         child: _ScanButton(
                           icon: Icons.receipt_long_outlined,
                           title: 'Photograph receipt',
-                          sub: 'Coming soon',
-                          onTap: () => _scanSoon('Receipt'),
+                          sub: 'Store, date, price',
+                          onTap: _scanning ? null : _photographReceipt,
                         ),
                       ),
                     ],

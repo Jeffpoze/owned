@@ -354,13 +354,33 @@ class _ProofBlock extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(vertical: 7),
                 child: Row(
                   children: [
+                    if (e.assetId != null) ...[
+                      GestureDetector(
+                        onTap: () => _viewDocument(context, e),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: ItemImage(e.assetId!, width: 40, height: 40),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                    ],
                     Expanded(
                       child: Text(evidenceInfo[e.kind]!.label, style: _body),
                     ),
-                    Text(
-                      evidenceInfo[e.kind]!.strength.name,
-                      style: TextStyle(fontSize: 12, color: p.ink3),
-                    ),
+                    if (e.assetId != null)
+                      TextButton(
+                        onPressed: () => _viewDocument(context, e),
+                        style: TextButton.styleFrom(
+                          foregroundColor: p.status[WarrantyState.documented],
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        child: const Text('View'),
+                      )
+                    else
+                      Text(
+                        evidenceInfo[e.kind]!.strength.name,
+                        style: TextStyle(fontSize: 12, color: p.ink3),
+                      ),
                   ],
                 ),
               ),
@@ -370,6 +390,29 @@ class _ProofBlock extends StatelessWidget {
     );
   }
 }
+
+/// Full-screen view of a saved document (e.g. the receipt): pinch to zoom.
+void _viewDocument(BuildContext context, Evidence e) =>
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (ctx) => Scaffold(
+          backgroundColor: Colors.black,
+          appBar: AppBar(
+            backgroundColor: Colors.black,
+            foregroundColor: Colors.white,
+            title: Text(
+              evidenceInfo[e.kind]!.label,
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+          body: InteractiveViewer(
+            maxScale: 6,
+            child: Center(child: ItemImage(e.assetId!, fit: BoxFit.contain)),
+          ),
+        ),
+      ),
+    );
 
 class _MaintenanceBlock extends StatelessWidget {
   const _MaintenanceBlock(this.it);

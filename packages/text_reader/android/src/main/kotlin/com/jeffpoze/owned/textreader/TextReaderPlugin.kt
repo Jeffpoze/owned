@@ -36,10 +36,21 @@ class TextReaderPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         recognizer.process(image)
             .addOnSuccessListener { text ->
-                val lines = text.textBlocks
-                    .flatMap { it.lines }
-                    .sortedWith(compareBy({ it.boundingBox?.top ?: 0 }, { it.boundingBox?.left ?: 0 }))
-                    .map { it.text }
+                // Join pieces on the same printed row (a receipt's item and its price), top to bottom.
+                val pieces = text.textBlocks.flatMap { it.lines }.filter { it.boundingBox != null }
+                    .sortedBy { it.boundingBox!!.centerY() }
+                val rows = mutableListOf<MutableList<com.google.mlkit.vision.text.Text.Line>>()
+                for (p in pieces) {
+                    val last = rows.lastOrNull()?.last()
+                    val box = p.boundingBox!!
+                    if (last != null && Math.abs(last.boundingBox!!.centerY() - box.centerY()) <
+                        Math.min(last.boundingBox!!.height(), box.height()) / 2) {
+                        rows.last().add(p)
+                    } else {
+                        rows.add(mutableListOf(p))
+                    }
+                }
+                val lines = rows.map { row -> row.sortedBy { it.boundingBox!!.left }.joinToString("  ") { it.text } }
                 result.success(lines.joinToString("\n"))
             }
             .addOnFailureListener { e -> result.error("recognition_failed", e.message, null) }
