@@ -178,7 +178,9 @@ class _EditItemScreenState extends State<EditItemScreen> {
   void _onTyped(TextEditingController field, String text) {
     _debounce?.cancel();
     final q = text.trim();
-    if (q.length < 3) {
+    // Lookups are limited per day: wait for a few letters, and don't search while naming
+    // an item whose model is already known (e.g. after a scan).
+    if (q.length < 4 || (field == _name && _model.text.trim().isNotEmpty)) {
       if (_suggestFor == field) _hideSuggestions();
       return;
     }
@@ -192,7 +194,7 @@ class _EditItemScreenState extends State<EditItemScreen> {
     // A model number alone is often ambiguous; the brand narrows it down.
     final brand = _brand.text.trim();
     final query = field == _model && brand.isNotEmpty ? '$brand $q' : q;
-    _debounce = Timer(const Duration(milliseconds: 600), () => _search(query));
+    _debounce = Timer(const Duration(milliseconds: 900), () => _search(query));
   }
 
   Future<void> _search(String query) async {
@@ -343,10 +345,7 @@ class _EditItemScreenState extends State<EditItemScreen> {
       try {
         if (f.upc != null) product = await productCatalog.lookupBarcode(f.upc!);
         if (product == null && f.model != null) {
-          final results = await productCatalog.search(
-            [f.brand, f.model].whereType<String>().join(' '),
-          );
-          product = bestModelMatch(results, f.model!);
+          product = await productCatalog.findByModel(f.brand ?? '', f.model!);
         }
         if (product == null) {
           lookupProblem = "The catalog doesn't have this product.";

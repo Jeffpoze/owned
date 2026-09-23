@@ -187,7 +187,12 @@ class ItemThumb extends StatelessWidget {
         borderRadius: BorderRadius.circular(radius),
       ),
       child: src != null
-          ? ItemImage(src, width: size, height: size, fit: official ? BoxFit.contain : BoxFit.cover)
+          ? ItemImage(
+              src,
+              width: size,
+              height: size,
+              fit: official ? BoxFit.contain : BoxFit.cover,
+            )
           : Text(
               categoryOf(item).emoji,
               style: TextStyle(fontSize: size * 0.46),

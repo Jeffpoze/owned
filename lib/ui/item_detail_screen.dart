@@ -133,7 +133,11 @@ class _IdentityTagState extends State<_IdentityTag> {
                     color: official ? Colors.white : null,
                     padding: official ? const EdgeInsets.all(16) : null,
                     height: 240,
-                    child: ItemImage(ref, height: 240, fit: official ? BoxFit.contain : BoxFit.cover),
+                    child: ItemImage(
+                      ref,
+                      height: 240,
+                      fit: official ? BoxFit.contain : BoxFit.cover,
+                    ),
                   );
                 },
               ),

@@ -75,6 +75,9 @@ abstract class ProductCatalog {
   Future<List<ProductMatch>> search(String query);
   Future<ProductMatch?> lookupBarcode(String upc);
 
+  /// The product with this exact model number (as printed on its label), or null.
+  Future<ProductMatch?> findByModel(String brand, String model);
+
   /// Downloads a product image so it can be saved with the item (never shown from the catalog's servers).
   Future<Uint8List?> downloadImage(ProductMatch match);
 }
@@ -148,9 +151,36 @@ ProductMatch? bestModelMatch(List<ProductMatch> results, String model) {
   return best;
 }
 
-/// UPCitemdb's free trial endpoints: no key, about 100 requests a day per network.
-/// Good for development. Before launch, move lookups to a server function with a
-/// licensed plan (see AGENTS.md, product image pipeline).
+const _unreachable = CatalogException(
+  "Couldn't reach the product catalog. Check your connection.",
+);
+const _usedUp = CatalogException(
+  'Product suggestions are used up for today. Fill in the details by hand for now.',
+);
+
+/// Downloads the first usable image, so it can be saved with the item.
+Future<Uint8List?> _downloadFirst(http.Client client, List<String> urls) async {
+  for (final url in urls.take(4)) {
+    try {
+      final res = await client
+          .get(Uri.parse(url))
+          .timeout(const Duration(seconds: 10));
+      final type = res.headers['content-type'] ?? '';
+      if (res.statusCode == 200 &&
+          type.startsWith('image/') &&
+          res.bodyBytes.length > 2000) {
+        return res.bodyBytes;
+      }
+    } catch (_) {
+      // Try the next image.
+    }
+  }
+  return null;
+}
+
+/// UPCitemdb's free trial: text search and barcode lookups, no key, about 100
+/// requests a day per network (shared by every device on the same Wi-Fi).
+/// Development only; before launch, move to a licensed plan behind a server function.
 class UpcItemDbCatalog implements ProductCatalog {
   UpcItemDbCatalog({http.Client? client}) : _client = client ?? http.Client();
 
@@ -158,24 +188,34 @@ class UpcItemDbCatalog implements ProductCatalog {
   final Map<String, List<ProductMatch>> _cache = {};
   static const _base = 'https://api.upcitemdb.com/prod/trial';
 
+  /// Set when the daily allowance runs out, so the app stops asking until tomorrow.
+  DateTime? _usedUpOn;
+
+  bool get _usedUpToday {
+    final d = _usedUpOn;
+    final now = DateTime.now();
+    return d != null &&
+        d.year == now.year &&
+        d.month == now.month &&
+        d.day == now.day;
+  }
+
   Future<Map<String, Object?>> _get(
     String path,
     Map<String, String> params,
   ) async {
+    if (_usedUpToday) throw _usedUp;
     final http.Response res;
     try {
       res = await _client
           .get(Uri.parse('$_base/$path').replace(queryParameters: params))
           .timeout(const Duration(seconds: 10));
     } catch (_) {
-      throw const CatalogException(
-        "Couldn't reach the product catalog. Check your connection.",
-      );
+      throw _unreachable;
     }
     if (res.statusCode == 429) {
-      throw const CatalogException(
-        "Product lookups are used up for today. Fill in the details by hand for now.",
-      );
+      _usedUpOn = DateTime.now();
+      throw _usedUp;
     }
     final body = jsonDecode(res.body) as Map<String, Object?>;
     if (res.statusCode == 400 && body['code'] == 'INVALID_UPC') {
@@ -191,24 +231,38 @@ class UpcItemDbCatalog implements ProductCatalog {
 
   ProductMatch _match(Map<String, Object?> j) {
     final title = (j['title'] as String? ?? '').trim();
-    final images = [
-      for (final u in (j['images'] as List? ?? const []))
-        if (u is String && u.startsWith('https://')) u,
-    ];
     return ProductMatch(
       title: title,
       brand: (j['brand'] as String? ?? '').trim(),
       model: (j['model'] as String? ?? '').trim(),
       upc: (j['upc'] as String? ?? j['ean'] as String? ?? '').trim(),
       category: categoryFromCatalog(j['category'] as String? ?? '', title),
-      imageUrls: images,
+      imageUrls: [
+        for (final u in (j['images'] as List? ?? const []))
+          if (u is String && u.startsWith('https://')) u,
+      ],
     );
+  }
+
+  /// Results already fetched for a shorter query, narrowed to [q] without a new request.
+  List<ProductMatch>? _refineCached(String q) {
+    final words = q.split(' ').where((w) => w.isNotEmpty).toList();
+    for (final entry in _cache.entries) {
+      if (entry.value.isEmpty || !q.startsWith(entry.key)) continue;
+      final hits = entry.value.where((m) {
+        final hay = '${m.title} ${m.brand} ${m.model}'.toLowerCase();
+        return words.every(hay.contains);
+      }).toList();
+      if (hits.isNotEmpty) return hits;
+    }
+    return null;
   }
 
   @override
   Future<List<ProductMatch>> search(String query) async {
-    final q = query.trim().toLowerCase();
-    if (_cache.containsKey(q)) return _cache[q]!;
+    final q = query.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+    final cached = _cache[q] ?? _refineCached(q);
+    if (cached != null) return cached;
     final body = await _get('search', {
       's': q,
       'match_mode': '0',
@@ -224,42 +278,139 @@ class UpcItemDbCatalog implements ProductCatalog {
       results.add(m);
     }
     // The plain product before bundles that include it (stable, so the catalog's order is kept otherwise).
-    final ranked = [
+    return _cache[q] = [
       ...results.where((m) => !m.isBundle),
       ...results.where((m) => m.isBundle),
     ];
-    return _cache[q] = ranked;
   }
 
   @override
   Future<ProductMatch?> lookupBarcode(String upc) async {
-    final body = await _get('lookup', {'upc': upc});
-    final items = body['items'] as List? ?? const [];
+    final items =
+        (await _get('lookup', {'upc': upc}))['items'] as List? ?? const [];
     return items.isEmpty
         ? null
         : _match((items.first as Map).cast<String, Object?>());
   }
 
   @override
-  Future<Uint8List?> downloadImage(ProductMatch match) async {
-    for (final url in match.imageUrls.take(4)) {
-      try {
-        final res = await _client
-            .get(Uri.parse(url))
-            .timeout(const Duration(seconds: 10));
-        final type = res.headers['content-type'] ?? '';
-        if (res.statusCode == 200 &&
-            type.startsWith('image/') &&
-            res.bodyBytes.length > 2000) {
-          return res.bodyBytes;
-        }
-      } catch (_) {
-        // Try the next image.
-      }
+  Future<ProductMatch?> findByModel(String brand, String model) async =>
+      bestModelMatch(
+        await search([brand, model].where((s) => s.isNotEmpty).join(' ')),
+        model,
+      );
+
+  @override
+  Future<Uint8List?> downloadImage(ProductMatch match) =>
+      _downloadFirst(_client, match.imageUrls);
+}
+
+/// Open Icecat: manufacturer data and images for brands that publish them openly
+/// (Samsung, HP, Lenovo and many more; not Apple). Exact lookups only (barcode, or
+/// brand + manufacturer part code), no daily limit, and images licensed for this use.
+class IcecatCatalog implements ProductCatalog {
+  IcecatCatalog({http.Client? client}) : _client = client ?? http.Client();
+
+  final http.Client _client;
+  static const _base = 'https://live.icecat.biz/api';
+
+  Future<ProductMatch?> _lookup(Map<String, String> params) async {
+    final http.Response res;
+    try {
+      res = await _client
+          .get(
+            Uri.parse(_base).replace(
+              queryParameters: {
+                'lang': 'en',
+                'shopname': 'openicecat-live',
+                'content': '',
+                ...params,
+              },
+            ),
+          )
+          .timeout(const Duration(seconds: 10));
+    } catch (_) {
+      throw _unreachable;
     }
-    return null;
+    // Not found, or a brand that doesn't share its data openly.
+    if (res.statusCode != 200) return null;
+    final data =
+        (jsonDecode(res.body) as Map<String, Object?>)['data']
+            as Map<String, Object?>?;
+    final info = data?['GeneralInfo'] as Map<String, Object?>?;
+    if (info == null) return null;
+    final image = data?['Image'] as Map<String, Object?>? ?? const {};
+    final category =
+        ((info['Category'] as Map?)?['Name'] as Map?)?['Value'] as String? ??
+        '';
+    final title = (info['Title'] as String? ?? '').trim();
+    return ProductMatch(
+      title: title,
+      brand: (info['Brand'] as String? ?? '').trim(),
+      model: (info['BrandPartCode'] as String? ?? '').trim(),
+      upc: params['GTIN'] ?? '',
+      category: categoryFromCatalog(category, title),
+      imageUrls: [
+        for (final k in ['HighPic', 'Pic500x500', 'LowPic'])
+          if (image[k] is String && (image[k] as String).startsWith('https://'))
+            image[k] as String,
+      ],
+    );
+  }
+
+  @override
+  Future<List<ProductMatch>> search(String query) async => const [];
+
+  @override
+  Future<ProductMatch?> lookupBarcode(String upc) => _lookup({'GTIN': upc});
+
+  @override
+  Future<ProductMatch?> findByModel(String brand, String model) async =>
+      brand.isEmpty ? null : _lookup({'Brand': brand, 'ProductCode': model});
+
+  @override
+  Future<Uint8List?> downloadImage(ProductMatch match) =>
+      _downloadFirst(_client, match.imageUrls);
+}
+
+/// Exact lookups try Open Icecat first (free, no daily limit), then UPCitemdb.
+/// Text search (the suggestions while typing) uses UPCitemdb.
+class CombinedCatalog implements ProductCatalog {
+  CombinedCatalog(this.exact, this.search_);
+  final ProductCatalog exact;
+  final ProductCatalog search_;
+
+  @override
+  Future<List<ProductMatch>> search(String query) => search_.search(query);
+
+  @override
+  Future<ProductMatch?> lookupBarcode(String upc) async =>
+      await _quiet(() => exact.lookupBarcode(upc)) ??
+      await search_.lookupBarcode(upc);
+
+  @override
+  Future<ProductMatch?> findByModel(String brand, String model) async =>
+      await _quiet(() => exact.findByModel(brand, model)) ??
+      await search_.findByModel(brand, model);
+
+  @override
+  Future<Uint8List?> downloadImage(ProductMatch match) =>
+      search_.downloadImage(match);
+
+  /// The first source failing shouldn't stop the second from being tried.
+  static Future<ProductMatch?> _quiet(
+    Future<ProductMatch?> Function() f,
+  ) async {
+    try {
+      return await f();
+    } on CatalogException {
+      return null;
+    }
   }
 }
 
 /// Shared so search results are cached across screens.
-final ProductCatalog productCatalog = UpcItemDbCatalog();
+final ProductCatalog productCatalog = CombinedCatalog(
+  IcecatCatalog(),
+  UpcItemDbCatalog(),
+);
