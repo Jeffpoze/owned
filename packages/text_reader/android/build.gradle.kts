@@ -53,4 +53,6 @@ kotlin {
 dependencies {
     // On-device, bundled model: works offline, no Google Play download.
     implementation("com.google.mlkit:text-recognition:16.0.1")
+    // Subject cut-out; the model is fetched by Google Play services on first use.
+    implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
 }

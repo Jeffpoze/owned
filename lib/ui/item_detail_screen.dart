@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../domain/brand_sites.dart';
 import '../domain/constants.dart';
 import '../domain/dates.dart';
 import '../domain/handoff.dart';
@@ -178,6 +180,28 @@ class _IdentityTagState extends State<_IdentityTag> {
                           ),
                         ),
                       ],
+                    ),
+                  ),
+                if (productPageLink(it.brand, it.model, it.name)
+                    case final link?)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: TextButton.icon(
+                      onPressed: () => launchUrl(
+                        link.url,
+                        mode: LaunchMode.inAppBrowserView,
+                      ),
+                      icon: const Icon(Icons.open_in_new, size: 16),
+                      label: Text(link.label),
+                      style: TextButton.styleFrom(
+                        foregroundColor: p.status[WarrantyState.documented],
+                        padding: EdgeInsets.zero,
+                        textStyle: const TextStyle(
+                          fontFamily: 'Archivo',
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                      ),
                     ),
                   ),
               ],

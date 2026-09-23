@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:text_reader/text_reader.dart';
 
 import '../domain/constants.dart';
 import '../domain/dates.dart';
@@ -99,7 +100,13 @@ class _EditItemScreenState extends State<EditItemScreen> {
         maxHeight: 1600,
         imageQuality: 85,
       );
-      if (file != null) setState(() => _picked = file);
+      if (file != null) {
+        setState(() {
+          _picked = file;
+          _cutOut = null;
+          _beforeCutOut = null;
+        });
+      }
     } catch (_) {
       if (mounted) {
         toast(
@@ -112,8 +119,49 @@ class _EditItemScreenState extends State<EditItemScreen> {
     }
   }
 
+  /// Background clean-up: null when not done, true while working, false when done
+  /// (with the photo before it kept for Undo).
+  bool? _cutOut;
+  XFile? _beforeCutOut;
+  bool _beforeCutOutWasSaved = false;
+
+  Future<void> _cleanBackground() async {
+    final store = context.read<ItemsStore>();
+    // A photo taken now is a file already; a saved one is looked up on the phone.
+    final source =
+        _picked?.path ??
+        (_photo == null ? null : await store.photoUrl(_photo!));
+    if (source == null || !source.startsWith('/') || !mounted) return;
+    setState(() => _cutOut = true);
+    final lifted = await liftSubject(source);
+    if (!mounted) return;
+    if (lifted == null) {
+      setState(() => _cutOut = null);
+      toast(
+        context,
+        "Couldn't find the item in that photo. Try one with the item filling most of the frame. "
+        '(Needs iOS 17 or later.)',
+      );
+      return;
+    }
+    setState(() {
+      _beforeCutOut = _picked;
+      _beforeCutOutWasSaved = _picked == null;
+      _picked = XFile(lifted);
+      _cutOut = false;
+    });
+  }
+
+  void _undoCutOut() => setState(() {
+    _picked = _beforeCutOutWasSaved ? null : _beforeCutOut;
+    _beforeCutOut = null;
+    _cutOut = null;
+  });
+
   /// Removes the user's photo if there is one, otherwise the product picture.
   void _removePhoto() => setState(() {
+    _cutOut = null;
+    _beforeCutOut = null;
     if (_picked != null || _photo != null) {
       _picked = null;
       _photo = null;
@@ -715,6 +763,9 @@ class _EditItemScreenState extends State<EditItemScreen> {
                     onTake: () => _pickPhoto(ImageSource.camera),
                     onChoose: () => _pickPhoto(ImageSource.gallery),
                     onRemove: _removePhoto,
+                    cutOut: _cutOut,
+                    onCutOut: _cleanBackground,
+                    onUndoCutOut: _undoCutOut,
                   ),
                   const SizedBox(height: 18),
                   Row(
@@ -1652,7 +1703,15 @@ class _PhotoPicker extends StatelessWidget {
     required this.onTake,
     required this.onChoose,
     required this.onRemove,
+    required this.cutOut,
+    required this.onCutOut,
+    required this.onUndoCutOut,
   });
+
+  /// Cut-out state: null when not started, true while working, false when done.
+  final bool? cutOut;
+  final VoidCallback onCutOut;
+  final VoidCallback onUndoCutOut;
   final XFile? picked;
   final String? saved;
   final Uint8List? officialBytes;
@@ -1721,6 +1780,22 @@ class _PhotoPicker extends StatelessWidget {
         children: [
           SizedBox(width: double.infinity, child: own),
           caption('Your photo'),
+          Positioned(
+            top: 10,
+            right: 10,
+            child: _PhotoPill(
+              busy: cutOut == true,
+              icon: cutOut == false ? Icons.undo : Icons.auto_awesome,
+              label: cutOut == true
+                  ? 'Cleaning up…'
+                  : cutOut == false
+                  ? 'Undo'
+                  : 'Clean background',
+              onTap: cutOut == true
+                  ? null
+                  : (cutOut == false ? onUndoCutOut : onCutOut),
+            ),
+          ),
           if (hasProduct)
             Positioned(
               right: 10,
@@ -1801,4 +1876,55 @@ class _PhotoPicker extends StatelessWidget {
       ),
     );
   }
+}
+
+class _PhotoPill extends StatelessWidget {
+  const _PhotoPill({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.busy = false,
+  });
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: Colors.black.withValues(alpha: 0.6),
+    shape: const StadiumBorder(),
+    child: InkWell(
+      customBorder: const StadiumBorder(),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (busy)
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            else
+              Icon(icon, size: 16, color: Colors.white),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
