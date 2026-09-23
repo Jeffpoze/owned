@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../domain/constants.dart';
 import '../domain/dates.dart';
 import '../domain/models.dart';
+import '../domain/valuation.dart';
 import '../domain/warranty.dart';
 import '../state/items_store.dart';
 import '../theme.dart';
@@ -75,7 +76,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    final value = list.fold<double>(0, (s, i) => s + estimatedValue(i));
+    final value = list.fold<double>(0, (s, i) => s + currentValue(i));
     int count(bool Function(Item) f) => list.where(f).length;
     final expiring = count(isExpiring);
     final returns = count(isReturnEnding);

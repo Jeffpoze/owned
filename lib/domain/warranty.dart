@@ -163,7 +163,8 @@ List<MaintenanceStatus> maintenanceDue(Item it, [DateTime? now]) {
   ];
 }
 
-/// Current value if the user set one, otherwise what they paid.
+/// For search ("over \$1000"): the value the user set, otherwise what they paid.
+/// The Home total uses [currentValue] from valuation.dart instead.
 double estimatedValue(Item it) =>
     (it.value ?? 0) > 0 ? it.value! : (it.price ?? 0);
 

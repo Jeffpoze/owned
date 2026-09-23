@@ -12,6 +12,7 @@ import '../domain/dates.dart';
 import '../domain/label_parser.dart';
 import '../domain/models.dart';
 import '../domain/receipt_parser.dart';
+import '../domain/valuation.dart';
 import '../services/catalog.dart';
 import '../services/label_reader.dart';
 import '../state/items_store.dart';
@@ -656,6 +657,19 @@ class _EditItemScreenState extends State<EditItemScreen> {
     context.pop();
   }
 
+  /// The automatic estimate for what's in the form right now, if there's enough to go on.
+  double? _liveEstimate() =>
+      valueEstimate(_draft.copyWith(price: _parseNum(_price.text)));
+
+  String _valueHint() {
+    final e = _liveEstimate();
+    return e == null ? 'Estimated from price and age' : 'About ${money(e)}';
+  }
+
+  String? _valueHintNote() => _liveEstimate() == null
+      ? null
+      : "Leave empty to use this estimate from the price, age and kind of item. Type a value if you know what it's worth.";
+
   Widget _suggestionList() => _Suggestions(
     searching: _searching,
     error: _searchError,
@@ -851,7 +865,12 @@ class _EditItemScreenState extends State<EditItemScreen> {
                       ),
                       _Field(
                         'Price paid',
-                        _TextBox(_price, hint: '0', number: true),
+                        _TextBox(
+                          _price,
+                          hint: '0',
+                          number: true,
+                          onChanged: (_) => setState(() {}),
+                        ),
                       ),
                     ]),
                     _Field(
@@ -891,11 +910,26 @@ class _EditItemScreenState extends State<EditItemScreen> {
                       ]),
                     ],
                     _Field(
-                      'Estimated value now (optional)',
-                      _TextBox(
-                        _value,
-                        hint: 'Defaults to price paid',
-                        number: true,
+                      'Value now (optional)',
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _TextBox(
+                            _value,
+                            hint: _valueHint(),
+                            number: true,
+                            onChanged: (_) => setState(() {}),
+                          ),
+                          if (_value.text.trim().isEmpty &&
+                              _valueHintNote() != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                _valueHintNote()!,
+                                style: labelStyle(context),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                   ]),

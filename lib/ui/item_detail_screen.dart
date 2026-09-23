@@ -8,6 +8,7 @@ import '../domain/constants.dart';
 import '../domain/dates.dart';
 import '../domain/handoff.dart';
 import '../domain/models.dart';
+import '../domain/valuation.dart';
 import '../domain/warranty.dart';
 import '../state/items_store.dart';
 import '../theme.dart';
@@ -313,11 +314,22 @@ class _OwnershipBlock extends StatelessWidget {
               style: mutedStyle(context),
             ),
           ],
-          if ((it.value ?? 0) > 0 && it.value != it.price) ...[
+          if (!it.sold && (it.value ?? 0) > 0) ...[
             const SizedBox(height: 6),
             Text(
-              'Estimated value now: ${money(it.value)}',
+              'Value now: ${money(it.value)} (your figure)',
               style: mutedStyle(context),
+            ),
+          ] else if (!it.sold && valueEstimate(it) != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Estimated value now: about ${money(valueEstimate(it))}',
+              style: mutedStyle(context),
+            ),
+            Text(
+              'Based on the price paid, its age and how ${categoryOf(it).label.toLowerCase()} usually resells. '
+              'Edit the item to set your own.',
+              style: labelStyle(context),
             ),
           ],
           if (it.sold) ...[
