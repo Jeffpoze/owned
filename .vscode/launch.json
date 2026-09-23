@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Owned",
+      "request": "launch",
+      "type": "dart",
+      "args": ["--dart-define-from-file=supabase.json"]
+    },
+    {
+      "name": "Owned (release)",
+      "request": "launch",
+      "type": "dart",
+      "flutterMode": "release",
+      "args": ["--dart-define-from-file=supabase.json"]
+    }
+  ]
+}
