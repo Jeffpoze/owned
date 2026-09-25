@@ -399,6 +399,7 @@ class ItemRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = context.palette;
     final meta = [
+      if (item.quantity > 1) '×${item.quantity}',
       item.room,
       item.brand,
       if (item.sold) 'Sold ${formatDate(parseDate(item.soldOn))}',

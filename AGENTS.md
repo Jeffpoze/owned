@@ -6,7 +6,7 @@ Owned is an iOS and Android app for keeping a digital inventory of everything a 
 
 ## Current state
 
-The app is a Flutter project (`lib/`, `ios/`, `android/`). Build steps 1, 2 and 3 are done, and step 5's catalog lookup works in development; accounts and sync (step 4) are built but on hold: without Supabase keys in `supabase.json` the app skips sign-in and saves items and photos on the phone. The web prototype at `prototype/owned.html` stays the reference for screens, copy, the warranty and proof logic, the plain-language search parser, and the example data. Ignore its hosting-runtime code (the db, assets, sample and downloads calls made in `boot()`); that was the hosting runtime for the web version and has no place in the native app.
+The app is a Flutter project (`lib/`, `ios/`, `android/`). See Roadmap below for what's done and what's next. Accounts and sync are built but on hold: without Supabase keys in `supabase.json` the app skips sign-in and saves items and photos on the phone. The web prototype at `prototype/owned.html` stays the reference for screens, copy, the warranty and proof logic, the plain-language search parser, and the example data. Ignore its hosting-runtime code (the db, assets, sample and downloads calls made in `boot()`); that was the hosting runtime for the web version and has no place in the native app.
 
 ## Stack (decided)
 
@@ -16,7 +16,7 @@ The app is a Flutter project (`lib/`, `ios/`, `android/`). Build steps 1, 2 and 
 - **Background removal:** on-device subject lifting (iOS Vision foreground mask via a small platform channel, Android ML Kit subject segmentation) for the fallback product image.
 - **Backend:** Supabase (`supabase_flutter`) for auth, Postgres, file storage (photos, receipts, product images) and household sharing.
 - **Server functions:** receipt parsing and product/catalog lookups run server-side so API keys never ship in the app.
-- **Payments:** RevenueCat (`purchases_flutter`) for subscriptions on both stores.
+- **Payments:** deferred. No RevenueCat, subscriptions, paywalls or free/paid checks for now (see Pricing).
 - **Icons and splash:** `scripts/generate-icons.py` draws the source images; `flutter_launcher_icons` and `flutter_native_splash` (config in `pubspec.yaml`) generate the platform assets.
 
 ## Screens
@@ -27,13 +27,14 @@ Mirror the prototype:
 - **Items:** filter chips (All, Under warranty, Expiring soon, Return window, Missing receipt, Maintenance due, Bought used, Sold) and plain-language search.
 - **Warranties (warranty wallet):** items with a warranty, sorted by time left, colour-coded by status.
 - **Item detail:** product image, identity (brand, model, serial, kind, room), warranty status with its explanation, ownership, proof, maintenance ("Done today"), notes, and actions (Edit, Copy handoff sheet, Mark as sold, Delete).
-- **Add/Edit:** "Photograph the label" and "Photograph the receipt" buttons at the top that prefill the form, then manual fields.
+- **Add (new items), step by step:** 1) What is it? (scan barcode, photograph label, photo, name/brand/model/serial with catalog suggestions); 2) How did you get it? (photograph receipt, new/used/gift, date, price each, how many with a live total, store, original purchase for used items); 3) Proof and warranty; 4) Where is it? (kind, room, and optional More details: value now, maintenance, notes); then an Added screen showing the real warranty status, proof strength, what was paid and the value, with View item and Add another. Back steps back through the flow.
+- **Edit (existing items):** the full form on one screen, with the same scan buttons at the top.
 - **Settings:** Appearance (System / Light / Dark), your data (CSV export, example home), how warranty status works; later the account.
 - **Sign in / create account:** required on first open. Email and password sign-up with email verification, then sign-in (Supabase auth). Keep the user signed in between launches, and let the phone save the password (iCloud Keychain / Google Password Manager autofill).
 
 ## Data model (per item)
 
-id, name, brand, model, serial, category, room, acquisition (new | used | gift), acquired (date), price, retailer, originalPurchase (date), originalRetailer, value, warrantyMonths, warrantySource (receipt | typical | guess), mfrConfirmed, transfer (unknown | transferable | conditional | non), returnDays, evidence[] {kind, assetId?}, maintenance[] {task, everyMonths, lastDone}, notes, officialImage, userPhoto, sold, soldOn, createdAt.
+id, name, brand, model, serial, category, room, acquisition (new | used | gift), acquired (date), price (for one), quantity (default 1; total = price × quantity), retailer, originalPurchase (date), originalRetailer, value, warrantyMonths, warrantySource (receipt | typical | guess), mfrConfirmed, transfer (unknown | transferable | conditional | non), returnDays, evidence[] {kind, assetId?}, maintenance[] {task, everyMonths, lastDone}, notes, officialImage, userPhoto, sold, soldOn, createdAt.
 
 ## Warranty rules (critical; don't simplify these)
 
@@ -83,9 +84,7 @@ Plain-language search with no AI, using pattern rules over the data (see `runQue
 
 ## Pricing
 
-- **Free:** 100 items, basic inventory.
-- **$29/year:** unlimited items, receipt storage, warranty tracking, insurance reports (CSV/PDF export), household sharing, cloud backup.
-- **Family:** multiple homes, multiple users, shared inventory.
+Deferred. Owned is free while it's built and tested on iOS and Android. Don't add subscriptions, RevenueCat, paywalls, item limits or premium-only features, and don't design the architecture around them. Monetization gets revisited once both platforms are solid with real-world use.
 
 ## Later features (not in the MVP)
 
@@ -94,14 +93,16 @@ Plain-language search with no AI, using pattern rules over the data (see `runQue
 - Warranty lookups with manufacturers where public tools exist.
 - Notifications for expiring warranties, closing return windows and maintenance.
 
-## Build order
+## Roadmap
 
-1. Flutter project, navigation, local data store, all screens using the prototype's example data.
-2. Warranty, proof and attention logic, with unit tests. Port from the prototype and test the used-item edge cases.
-3. Barcode and on-device OCR scanning with field extraction.
-4. Supabase auth, sync and photo storage.
-5. Product image lookup and background-removal fallback.
-6. Receipt parsing server function.
-7. Notifications, subscriptions, store submission.
+Done so far: Flutter project and all screens; warranty, proof and attention logic with tests; barcode and on-device OCR scanning; Supabase auth and sync (built, on hold); product image lookup and background removal (development catalog).
+
+1. **Add Item flow redesign.** Fast, step by step: identify the item (scan first), how you got it, proof and warranty, where it is, then a done screen. Keep the existing scanning, OCR, catalog lookup, receipt parsing and warranty logic. Don't ask for what the app can fill in. The done screen shows the status the rules actually give (Documented, Estimated…), never Verified unless the manufacturer confirmed it. Editing an existing item keeps the full form.
+2. **Product / Item architecture, done together:** separate generic product data (brand, model, UPC, images, specs) from each owned item (serial, purchase, proof, warranty, room, condition); server-side catalog lookups; Supabase sync; a migration plan before real users have lots of data.
+3. **Onboarding and account management:** a clear first action after sign-in (scan your first item, or explore the example home); in-app account deletion; data export and recovery.
+4. **Notifications:** warranty expiry, return windows, maintenance, with user-controlled levels (Essential / Normal / Off).
+5. **Crash reporting and reliability testing, before outside testers:** crash reporting; sync failures; offline; OCR failures; camera and scanner edge cases; bad or missing product matches; large inventories; denied permissions; the app killed during scanning, upload or sync.
+6. **Wide testing on iOS and Android:** newer and older iPhones, inexpensive Android phones, different cameras and OS versions, poor or no internet, large inventories, French and English. Distribution (TestFlight, Play internal testing) gets set up when it's time for outside testers.
+7. **App Store and Play Store launch.**
 
 When a step needs accounts, API keys or manual setup (Apple/Google developer accounts, Supabase, catalog APIs), stop and explain exactly what to do.

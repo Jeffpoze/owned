@@ -110,6 +110,7 @@ class _IdentityTagState extends State<_IdentityTag> {
       ('Serial', it.serial),
       ('Kind', categoryOf(it).label),
       ('Room', it.room),
+      ('Qty', it.quantity > 1 ? '${it.quantity}' : ''),
     ].where((r) => r.$2.isNotEmpty);
 
     return Container(
@@ -323,7 +324,7 @@ class _OwnershipBlock extends StatelessWidget {
     final got =
         '$how'
         '${it.acquired != null ? ' on ${formatDate(parseDate(it.acquired))}' : ''}'
-        '${(it.price ?? 0) > 0 ? ' for ${money(it.price)}' : ''}'
+        '${(it.price ?? 0) > 0 ? (it.quantity > 1 ? ' for ${money(it.totalPrice)} (${it.quantity} at ${money(it.price)} each)' : ' for ${money(it.price)}') : ''}'
         '${it.retailer.isNotEmpty ? ' from ${it.retailer}' : ''}.';
     return CardBox(
       child: Column(

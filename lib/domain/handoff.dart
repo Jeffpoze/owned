@@ -22,13 +22,17 @@ String handoffSheet(Item it, [DateTime? now]) {
 
   return [
     it.name,
+    if (it.quantity > 1) 'Quantity: ${it.quantity}',
     if (it.brand.isNotEmpty) 'Brand: ${it.brand}',
     if (it.model.isNotEmpty) 'Model: ${it.model}',
     if (it.serial.isNotEmpty) 'Serial: ${it.serial}',
     '',
     if ((it.originalPurchase?.isNotEmpty ?? false) || it.isNew)
       'Original purchase: ${purchase.isEmpty ? 'unknown' : purchase}${originalStore.isNotEmpty ? ', $originalStore' : ''}',
-    if (it.isNew && (it.price ?? 0) > 0) 'Original price: ${money(it.price)}',
+    if (it.isNew && (it.price ?? 0) > 0)
+      it.quantity > 1
+          ? 'Original price: ${money(it.price)} each, ${money(it.totalPrice)} for ${it.quantity}'
+          : 'Original price: ${money(it.price)}',
     w.end != null
         ? 'Warranty: ${w.state == WarrantyState.expired ? 'ended' : 'potentially valid until'} ${formatDate(w.end)} (${stateLabel[w.state]!.toLowerCase()})'
         : 'Warranty: ${w.months > 0 ? '${w.months} months, start date unknown' : 'unknown'}',

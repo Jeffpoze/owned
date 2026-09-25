@@ -93,6 +93,8 @@ class MaintenanceTask {
 
 const _unset = Object();
 
+int _atLeastOne(int? n) => n == null || n < 1 ? 1 : n;
+
 class Item {
   const Item({
     required this.id,
@@ -105,6 +107,7 @@ class Item {
     this.acquisition = Acquisition.newItem,
     this.acquired,
     this.price,
+    this.quantity = 1,
     this.retailer = '',
     this.originalPurchase,
     this.originalRetailer = '',
@@ -135,7 +138,12 @@ class Item {
 
   /// The date the user got the item.
   final IsoDate? acquired;
+
+  /// Price paid for one. With [quantity] above 1, the total is [totalPrice].
   final double? price;
+
+  /// How many of the same thing this record covers (e.g. 3 light bulbs). At least 1.
+  final int quantity;
   final String retailer;
 
   /// For used or gifted items: when the item was first bought new.
@@ -158,6 +166,10 @@ class Item {
 
   bool get isNew => acquisition == Acquisition.newItem;
 
+  /// What was paid for all of them: price each × quantity. Null when there's no price.
+  double? get totalPrice =>
+      price == null ? null : (price! * quantity * 100).round() / 100;
+
   Item copyWith({
     String? name,
     String? brand,
@@ -168,6 +180,7 @@ class Item {
     Acquisition? acquisition,
     Object? acquired = _unset,
     Object? price = _unset,
+    int? quantity,
     String? retailer,
     Object? originalPurchase = _unset,
     String? originalRetailer,
@@ -187,6 +200,9 @@ class Item {
   }) {
     T? pick<T>(Object? v, T? current) =>
         identical(v, _unset) ? current : v as T?;
+    // Money is an Object? here so it can be cleared; accept ints like 1000 too.
+    double? money(Object? v, double? current) =>
+        identical(v, _unset) ? current : (v as num?)?.toDouble();
     return Item(
       id: id,
       name: name ?? this.name,
@@ -197,11 +213,12 @@ class Item {
       room: room ?? this.room,
       acquisition: acquisition ?? this.acquisition,
       acquired: pick<String>(acquired, this.acquired),
-      price: pick<double>(price, this.price),
+      price: money(price, this.price),
+      quantity: quantity ?? this.quantity,
       retailer: retailer ?? this.retailer,
       originalPurchase: pick<String>(originalPurchase, this.originalPurchase),
       originalRetailer: originalRetailer ?? this.originalRetailer,
-      value: pick<double>(value, this.value),
+      value: money(value, this.value),
       warrantyMonths: pick<int>(warrantyMonths, this.warrantyMonths),
       warrantySource: warrantySource ?? this.warrantySource,
       mfrConfirmed: mfrConfirmed ?? this.mfrConfirmed,
@@ -229,6 +246,7 @@ class Item {
     'acquisition': _acqToJson(acquisition),
     'acquired': acquired,
     'price': price,
+    'quantity': quantity,
     'retailer': retailer,
     'originalPurchase': originalPurchase,
     'originalRetailer': originalRetailer,
@@ -259,6 +277,8 @@ class Item {
     acquisition: _acqFromJson(j['acquisition']),
     acquired: j['acquired'] as String?,
     price: (j['price'] as num?)?.toDouble(),
+    // Items saved before quantities existed are a single item.
+    quantity: _atLeastOne((j['quantity'] as num?)?.toInt()),
     retailer: j['retailer'] as String? ?? '',
     originalPurchase: j['originalPurchase'] as String?,
     originalRetailer: j['originalRetailer'] as String? ?? '',

@@ -14,6 +14,7 @@ import '../domain/label_parser.dart';
 import '../domain/models.dart';
 import '../domain/receipt_parser.dart';
 import '../domain/valuation.dart';
+import '../domain/warranty.dart';
 import '../services/catalog.dart';
 import '../services/label_reader.dart';
 import '../state/items_store.dart';
@@ -68,6 +69,7 @@ class _EditItemScreenState extends State<EditItemScreen> {
   late final _serial = TextEditingController(text: _draft.serial);
   late final _room = TextEditingController(text: _draft.room);
   late final _price = TextEditingController(text: _numText(_draft.price));
+  late final _qty = TextEditingController(text: '${_draft.quantity}');
   late final _retailer = TextEditingController(text: _draft.retailer);
   late final _originalRetailer = TextEditingController(
     text: _draft.originalRetailer,
@@ -427,8 +429,14 @@ class _EditItemScreenState extends State<EditItemScreen> {
     if (!mounted) return;
     if (line != null) {
       if (isNew) {
-        _price.text = _numText(line.price);
-        filled.add('price');
+        // With several of the same thing, the receipt line is usually the total for all of them.
+        final q = _quantity;
+        _price.text = _numText(
+          q > 1 ? (line.price / q * 100).round() / 100 : line.price,
+        );
+        filled.add(
+          q > 1 ? 'price each (the receipt line split across $q)' : 'price',
+        );
       }
       if (_name.text.trim().isEmpty) {
         _name.text = line.description;
@@ -575,6 +583,18 @@ class _EditItemScreenState extends State<EditItemScreen> {
 
   bool get _used => _draft.acquisition != Acquisition.newItem;
 
+  /// How many the user bought, from the quantity box (at least 1).
+  int get _quantity {
+    final n = int.tryParse(_qty.text.trim());
+    return n == null || n < 1 ? 1 : n;
+  }
+
+  /// Price each × quantity, while the form is being filled in.
+  double? _liveTotal() {
+    final each = _parseNum(_price.text);
+    return each == null ? null : (each * _quantity * 100).round() / 100;
+  }
+
   @override
   void dispose() {
     for (final c in [
@@ -584,6 +604,7 @@ class _EditItemScreenState extends State<EditItemScreen> {
       _serial,
       _room,
       _price,
+      _qty,
       _retailer,
       _originalRetailer,
       _value, //
@@ -605,6 +626,7 @@ class _EditItemScreenState extends State<EditItemScreen> {
     final name = _name.text.trim();
     if (name.isEmpty) {
       toast(context, 'Give the item a name');
+      if (_stepped) _goTo(0);
       return;
     }
     setState(() => _saving = true);
@@ -660,6 +682,7 @@ class _EditItemScreenState extends State<EditItemScreen> {
       room: _room.text.trim(),
       retailer: _retailer.text.trim(),
       price: _parseNum(_price.text),
+      quantity: _quantity,
       value: _parseNum(_value.text),
       warrantyMonths: _parseNum(_warrantyMonths.text)?.round(),
       // Original purchase and transferability only apply to used and gifted items; return windows only to new ones.
@@ -701,13 +724,22 @@ class _EditItemScreenState extends State<EditItemScreen> {
     if (oldReceipt != null && oldReceipt != savedReceipt) {
       store.discardPhoto(oldReceipt);
     }
-    toast(context, _existing == null ? 'Added $name' : 'Saved');
+    if (_existing == null) {
+      // Show what was added, with the status the rules give it.
+      setState(() {
+        _saving = false;
+        _added = it;
+      });
+      return;
+    }
+    toast(context, 'Saved');
     context.pop();
   }
 
   /// The automatic estimate for what's in the form right now, if there's enough to go on.
-  double? _liveEstimate() =>
-      valueEstimate(_draft.copyWith(price: _parseNum(_price.text)));
+  double? _liveEstimate() => valueEstimate(
+    _draft.copyWith(price: _parseNum(_price.text), quantity: _quantity),
+  );
 
   String _valueHint() {
     final e = _liveEstimate();
@@ -726,412 +758,605 @@ class _EditItemScreenState extends State<EditItemScreen> {
     onClose: _hideSuggestions,
   );
 
-  @override
-  Widget build(BuildContext context) {
+  // ---- layout ----
+
+  /// Adding a new item goes step by step; editing shows the whole form.
+  bool get _stepped => _existing == null;
+
+  int _step = 0;
+
+  /// "More details" on the last step: value, maintenance and notes.
+  bool _moreOpen = false;
+
+  /// Set once a new item is saved: the screen then shows what was added.
+  Item? _added;
+
+  static const _steps = [
+    (
+      'What is it?',
+      'Scan it and Owned fills in what it can, or type the name.',
+    ),
+    (
+      'How did you get it?',
+      'Photograph the receipt to fill this in, or add the details yourself.',
+    ),
+    (
+      'Proof and warranty',
+      "No receipt is fine. It just means Owned is less sure about coverage.",
+    ),
+    ('Where is it?', 'Last step. Everything under More details is optional.'),
+  ];
+
+  void _goTo(int step) {
+    FocusScope.of(context).unfocus();
+    _hideSuggestions();
+    setState(() {
+      _step = step;
+      if (!_scanning) _status = null;
+    });
+  }
+
+  void _next() {
+    if (_step == 0 && _name.text.trim().isEmpty) {
+      toast(context, 'Scan the item or type its name to continue');
+      return;
+    }
+    _goTo(_step + 1);
+  }
+
+  Widget _statusLine(BuildContext context) {
     final p = context.palette;
+    if (_status == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_scanning) ...[
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 8),
+          ],
+          Expanded(
+            child: Text(
+              _status!,
+              style: labelStyle(context).copyWith(
+                color: _statusWarn ? p.status[WarrantyState.estimated] : null,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _photoPicker() => _PhotoPicker(
+    picked: _picked,
+    saved: _photo,
+    officialBytes: _officialBytes,
+    official: _official,
+    onTake: () => _pickPhoto(ImageSource.camera),
+    onChoose: () => _pickPhoto(ImageSource.gallery),
+    onRemove: _removePhoto,
+    cutOut: _cutOut,
+    onCutOut: _cleanBackground,
+    onUndoCutOut: _undoCutOut,
+  );
+
+  Widget _scanButtons({
+    bool barcode = true,
+    bool label = true,
+    bool receipt = true,
+  }) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      for (final (ix, b) in [
+        if (barcode)
+          _ScanButton(
+            icon: Icons.qr_code_scanner,
+            title: 'Scan barcode',
+            sub: 'Box or serial label',
+            onTap: _scanning ? null : _scanBarcode,
+          ),
+        if (label)
+          _ScanButton(
+            icon: Icons.sell_outlined,
+            title: 'Photograph label',
+            sub: 'Model and serial',
+            onTap: _scanning ? null : _photographLabel,
+          ),
+        if (receipt)
+          _ScanButton(
+            icon: Icons.receipt_long_outlined,
+            title: 'Photograph receipt',
+            sub: 'Store, date, price',
+            onTap: _scanning ? null : _photographReceipt,
+          ),
+      ].indexed) ...[if (ix > 0) const SizedBox(width: 8), Expanded(child: b)],
+    ],
+  );
+
+  /// Name, brand, model and serial number.
+  List<Widget> _identityFields() => [
+    _Field(
+      key: _nameKey,
+      'Name',
+      _TextBox(
+        _name,
+        hint: 'Start typing, e.g. Samsung QN90',
+        capitalize: true,
+        onChanged: (t) => _onTyped(_name, t),
+      ),
+    ),
+    if (_suggestFor == _name) _suggestionList(),
+    _Row(key: _modelKey, [
+      _Field('Brand', _TextBox(_brand, capitalize: true)),
+      _Field(
+        'Model',
+        _TextBox(_model, caps: true, onChanged: (t) => _onTyped(_model, t)),
+      ),
+    ]),
+    if (_suggestFor == _model) _suggestionList(),
+    _Field('Serial number', _TextBox(_serial, caps: true)),
+  ];
+
+  /// Kind and room.
+  List<Widget> _placeFields() {
     final rooms = {for (final i in context.read<ItemsStore>().items) i.room}
       ..remove('');
     final typed = _room.text.trim().toLowerCase();
     final roomHints = rooms
         .where((r) => r != _room.text && r.toLowerCase().startsWith(typed))
         .toList();
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_existing == null ? 'Add an item' : 'Edit item'),
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          tooltip: 'Close',
-          onPressed: () => context.pop(),
+    return [
+      _Field(
+        'Kind',
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final c in Category.values)
+              PillChip(
+                categories[c]!.label,
+                selected: _draft.category == c,
+                onTap: () => _set((d) => d.copyWith(category: c)),
+              ),
+          ],
         ),
       ),
-      body: SafeArea(
-        top: false,
-        child: Column(
+      _Field(
+        'Room',
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: ListView(
-                keyboardDismissBehavior:
-                    ScrollViewKeyboardDismissBehavior.onDrag,
-                padding: const EdgeInsets.fromLTRB(gutter, 8, gutter, 24),
+            _TextBox(
+              _room,
+              hint: 'Living room',
+              capitalize: true,
+              onChanged: (_) => setState(() {}),
+            ),
+            if (roomHints.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
                 children: [
-                  _PhotoPicker(
-                    picked: _picked,
-                    saved: _photo,
-                    officialBytes: _officialBytes,
-                    official: _official,
-                    onTake: () => _pickPhoto(ImageSource.camera),
-                    onChoose: () => _pickPhoto(ImageSource.gallery),
-                    onRemove: _removePhoto,
-                    cutOut: _cutOut,
-                    onCutOut: _cleanBackground,
-                    onUndoCutOut: _undoCutOut,
-                  ),
-                  const SizedBox(height: 18),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: _ScanButton(
-                          icon: Icons.qr_code_scanner,
-                          title: 'Scan barcode',
-                          sub: 'Box or serial label',
-                          onTap: _scanning ? null : _scanBarcode,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _ScanButton(
-                          icon: Icons.sell_outlined,
-                          title: 'Photograph label',
-                          sub: 'Model and serial',
-                          onTap: _scanning ? null : _photographLabel,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _ScanButton(
-                          icon: Icons.receipt_long_outlined,
-                          title: 'Photograph receipt',
-                          sub: 'Store, date, price',
-                          onTap: _scanning ? null : _photographReceipt,
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (_status != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 10),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (_scanning) ...[
-                            const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                            const SizedBox(width: 8),
-                          ],
-                          Expanded(
-                            child: Text(
-                              _status!,
-                              style: labelStyle(context).copyWith(
-                                color: _statusWarn
-                                    ? p.status[WarrantyState.estimated]
-                                    : null,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  _Section('What it is', [
-                    _Field(
-                      key: _nameKey,
-                      'Name',
-                      _TextBox(
-                        _name,
-                        hint: 'Start typing, e.g. Samsung QN90',
-                        capitalize: true,
-                        onChanged: (t) => _onTyped(_name, t),
-                      ),
-                    ),
-                    if (_suggestFor == _name) _suggestionList(),
-                    _Row(key: _modelKey, [
-                      _Field('Brand', _TextBox(_brand, capitalize: true)),
-                      _Field(
-                        'Model',
-                        _TextBox(
-                          _model,
-                          caps: true,
-                          onChanged: (t) => _onTyped(_model, t),
-                        ),
-                      ),
-                    ]),
-                    if (_suggestFor == _model) _suggestionList(),
-                    _Field('Serial number', _TextBox(_serial, caps: true)),
-                    _Field(
-                      'Kind',
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          for (final c in Category.values)
-                            PillChip(
-                              categories[c]!.label,
-                              selected: _draft.category == c,
-                              onTap: () => _set((d) => d.copyWith(category: c)),
-                            ),
-                        ],
-                      ),
-                    ),
-                    _Field(
-                      'Room',
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _TextBox(
-                            _room,
-                            hint: 'Living room',
-                            capitalize: true,
-                            onChanged: (_) => setState(() {}),
-                          ),
-                          if (roomHints.isNotEmpty) ...[
-                            const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 6,
-                              runSpacing: 6,
-                              children: [
-                                for (final r in roomHints)
-                                  PillChip(
-                                    r,
-                                    onTap: () => setState(() => _room.text = r),
-                                  ),
-                              ],
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ]),
-                  _Section('How you got it', [
-                    _Segmented<Acquisition>(
-                      value: _draft.acquisition,
-                      options: const [
-                        (Acquisition.newItem, 'New'),
-                        (Acquisition.used, 'Used'),
-                        (Acquisition.gift, 'Gift'),
-                      ],
-                      onChanged: (a) => _set((d) => d.copyWith(acquisition: a)),
-                    ),
-                    _Row([
-                      _Field(
-                        'Date you got it',
-                        _DateButton(
-                          value: _draft.acquired,
-                          onChanged: (v) =>
-                              _set((d) => d.copyWith(acquired: v)),
-                        ),
-                      ),
-                      _Field(
-                        'Price paid',
-                        _TextBox(
-                          _price,
-                          hint: '0',
-                          number: true,
-                          onChanged: (_) => setState(() {}),
-                        ),
-                      ),
-                    ]),
-                    _Field(
-                      switch (_draft.acquisition) {
-                        Acquisition.used => 'Where or who from',
-                        Acquisition.gift => 'From',
-                        Acquisition.newItem => 'Store',
-                      },
-                      _TextBox(
-                        _retailer,
-                        hint: _used ? null : 'Best Buy',
-                        capitalize: true,
-                      ),
-                    ),
-                    if (_used) ...[
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Text(
-                          'A warranty starts at the original purchase, not the day you got it.',
-                          style: labelStyle(context),
-                        ),
-                      ),
-                      _Row([
-                        _Field(
-                          'Original purchase date',
-                          _DateButton(
-                            value: _draft.originalPurchase,
-                            optional: true,
-                            onChanged: (v) =>
-                                _set((d) => d.copyWith(originalPurchase: v)),
-                          ),
-                        ),
-                        _Field(
-                          'Original store',
-                          _TextBox(_originalRetailer, capitalize: true),
-                        ),
-                      ]),
-                    ],
-                    _Field(
-                      'Value now (optional)',
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _TextBox(
-                            _value,
-                            hint: _valueHint(),
-                            number: true,
-                            onChanged: (_) => setState(() {}),
-                          ),
-                          if (_value.text.trim().isEmpty &&
-                              _valueHintNote() != null)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 4),
-                              child: Text(
-                                _valueHintNote()!,
-                                style: labelStyle(context),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ]),
-                  _Section('Warranty', [
-                    _Field(
-                      'Length in months',
-                      _TextBox(_warrantyMonths, hint: '12', number: true),
-                    ),
-                    _Radios<WarrantySource>(
-                      label: 'Where that comes from',
-                      value: _draft.warrantySource,
-                      options: const [
-                        (WarrantySource.receipt, 'Receipt or warranty card'),
-                        (WarrantySource.typical, "Manufacturer's usual length"),
-                        (WarrantySource.guess, 'Not sure'),
-                      ],
-                      onChanged: (v) =>
-                          _set((d) => d.copyWith(warrantySource: v)),
-                    ),
-                    if (_used)
-                      _Radios<Transfer>(
-                        label: 'Does it transfer to you?',
-                        value: _draft.transfer,
-                        options: const [
-                          (Transfer.unknown, "Don't know"),
-                          (Transfer.transferable, 'Yes, transferable'),
-                          (
-                            Transfer.conditional,
-                            'Only with proof of original purchase',
-                          ),
-                          (Transfer.non, 'No, tied to the original buyer'),
-                        ],
-                        onChanged: (v) => _set((d) => d.copyWith(transfer: v)),
-                      )
-                    else
-                      _Field(
-                        'Return window in days (optional)',
-                        _TextBox(_returnDays, hint: '30', number: true),
-                      ),
-                    _Box([
-                      _Check(
-                        label: 'The manufacturer confirmed my coverage',
-                        value: _draft.mfrConfirmed,
-                        onChanged: (v) =>
-                            _set((d) => d.copyWith(mfrConfirmed: v)),
-                      ),
-                    ]),
-                  ]),
-                  _Section('Proof you have', [
-                    _Box([
-                      for (final k in EvidenceKind.values)
-                        _Check(
-                          label: evidenceInfo[k]!.label,
-                          aside: evidenceInfo[k]!.strength.name,
-                          value: _draft.evidence.any((e) => e.kind == k),
-                          onChanged: (on) => _set(
-                            (d) => d.copyWith(
-                              evidence: on
-                                  ? [...d.evidence, Evidence(k)]
-                                  : d.evidence
-                                        .where((e) => e.kind != k)
-                                        .toList(),
-                            ),
-                          ),
-                        ),
-                    ]),
-                  ]),
-                  _Section('Maintenance', [
-                    for (final (ix, m) in _maint.indexed)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: _TextBox(
-                                m.task,
-                                hint: 'Replace water filter',
-                                capitalize: true,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            SizedBox(
-                              width: 90,
-                              child: _TextBox(
-                                m.every,
-                                hint: 'Months',
-                                number: true,
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: 'Remove task',
-                              icon: Icon(Icons.close, color: p.ink2),
-                              onPressed: () =>
-                                  setState(() => _maint.removeAt(ix)),
-                            ),
-                          ],
-                        ),
-                      ),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: TextButton(
-                        style: TextButton.styleFrom(
-                          padding: EdgeInsets.zero,
-                          foregroundColor: p.status[WarrantyState.documented],
-                        ),
-                        onPressed: () => setState(
-                          () => _maint.add(_MaintRow('', '6', null)),
-                        ),
-                        child: const Text(
-                          '+ Add a recurring task',
-                          style: TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                    ),
-                  ]),
-                  _Section('Notes', [
-                    _TextBox(_notes, lines: 3, capitalize: true),
-                  ]),
+                  for (final r in roomHints)
+                    PillChip(r, onTap: () => setState(() => _room.text = r)),
                 ],
               ),
-            ),
-            Container(
-              decoration: BoxDecoration(
-                color: p.paper,
-                border: Border(top: BorderSide(color: p.rule, width: 0.5)),
-              ),
-              padding: const EdgeInsets.fromLTRB(gutter, 12, gutter, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: AppButton(
-                      'Cancel',
-                      kind: ButtonKind.ghost,
-                      onPressed: () => context.pop(),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: AppButton(
-                      _saving
-                          ? 'Saving…'
-                          : _existing == null
-                          ? 'Add item'
-                          : 'Save changes',
-                      onPressed: _saving ? null : _save,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            ],
           ],
+        ),
+      ),
+    ];
+  }
+
+  /// New, used or gift; date, price, quantity and where it came from.
+  List<Widget> _purchaseFields() {
+    final qty = _quantity;
+    final total = _liveTotal();
+    return [
+      _Segmented<Acquisition>(
+        value: _draft.acquisition,
+        options: const [
+          (Acquisition.newItem, 'New'),
+          (Acquisition.used, 'Used'),
+          (Acquisition.gift, 'Gift'),
+        ],
+        onChanged: (a) => _set((d) => d.copyWith(acquisition: a)),
+      ),
+      _Row([
+        _Field(
+          'Date you got it',
+          _DateButton(
+            value: _draft.acquired,
+            onChanged: (v) => _set((d) => d.copyWith(acquired: v)),
+          ),
+        ),
+        _Field(
+          qty > 1 ? 'Price each' : 'Price paid',
+          _TextBox(
+            _price,
+            hint: '0',
+            number: true,
+            onChanged: (_) => setState(() {}),
+          ),
+        ),
+      ]),
+      _Field(
+        'How many',
+        Row(
+          children: [
+            _QuantityStepper(
+              controller: _qty,
+              onChanged: () => setState(() {}),
+            ),
+            const SizedBox(width: 14),
+            if (qty > 1 && total != null)
+              Expanded(
+                child: Text(
+                  'Total ${money(total)}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 16,
+                  ),
+                ),
+              )
+            else if (qty > 1)
+              Expanded(
+                child: Text(
+                  'Add the price of one to get the total.',
+                  style: labelStyle(context),
+                ),
+              ),
+          ],
+        ),
+      ),
+      _Field(
+        switch (_draft.acquisition) {
+          Acquisition.used => 'Where or who from',
+          Acquisition.gift => 'From',
+          Acquisition.newItem => 'Store',
+        },
+        _TextBox(_retailer, hint: _used ? null : 'Best Buy', capitalize: true),
+      ),
+      if (_used) ...[
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            'A warranty starts at the original purchase, not the day you got it.',
+            style: labelStyle(context),
+          ),
+        ),
+        _Row([
+          _Field(
+            'Original purchase date',
+            _DateButton(
+              value: _draft.originalPurchase,
+              optional: true,
+              onChanged: (v) => _set((d) => d.copyWith(originalPurchase: v)),
+            ),
+          ),
+          _Field(
+            'Original store',
+            _TextBox(_originalRetailer, capitalize: true),
+          ),
+        ]),
+      ],
+    ];
+  }
+
+  Widget _valueField() => _Field(
+    _quantity > 1
+        ? 'Value now, all $_quantity (optional)'
+        : 'Value now (optional)',
+    Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _TextBox(
+          _value,
+          hint: _valueHint(),
+          number: true,
+          onChanged: (_) => setState(() {}),
+        ),
+        if (_value.text.trim().isEmpty && _valueHintNote() != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(_valueHintNote()!, style: labelStyle(context)),
+          ),
+      ],
+    ),
+  );
+
+  List<Widget> _warrantyFields() => [
+    _Field(
+      'Length in months',
+      _TextBox(_warrantyMonths, hint: '12', number: true),
+    ),
+    _Radios<WarrantySource>(
+      label: 'Where that comes from',
+      value: _draft.warrantySource,
+      options: const [
+        (WarrantySource.receipt, 'Receipt or warranty card'),
+        (WarrantySource.typical, "Manufacturer's usual length"),
+        (WarrantySource.guess, 'Not sure'),
+      ],
+      onChanged: (v) => _set((d) => d.copyWith(warrantySource: v)),
+    ),
+    if (_used)
+      _Radios<Transfer>(
+        label: 'Does it transfer to you?',
+        value: _draft.transfer,
+        options: const [
+          (Transfer.unknown, "Don't know"),
+          (Transfer.transferable, 'Yes, transferable'),
+          (Transfer.conditional, 'Only with proof of original purchase'),
+          (Transfer.non, 'No, tied to the original buyer'),
+        ],
+        onChanged: (v) => _set((d) => d.copyWith(transfer: v)),
+      )
+    else
+      _Field(
+        'Return window in days (optional)',
+        _TextBox(_returnDays, hint: '30', number: true),
+      ),
+    _Box([
+      _Check(
+        label: 'The manufacturer confirmed my coverage',
+        value: _draft.mfrConfirmed,
+        onChanged: (v) => _set((d) => d.copyWith(mfrConfirmed: v)),
+      ),
+    ]),
+  ];
+
+  List<Widget> _proofFields() => [
+    _Box([
+      for (final k in EvidenceKind.values)
+        _Check(
+          label: evidenceInfo[k]!.label,
+          aside: evidenceInfo[k]!.strength.name,
+          value: _draft.evidence.any((e) => e.kind == k),
+          onChanged: (on) => _set(
+            (d) => d.copyWith(
+              evidence: on
+                  ? [...d.evidence, Evidence(k)]
+                  : d.evidence.where((e) => e.kind != k).toList(),
+            ),
+          ),
+        ),
+    ]),
+  ];
+
+  List<Widget> _maintenanceFields(BuildContext context) {
+    final p = context.palette;
+    return [
+      for (final (ix, m) in _maint.indexed)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: _TextBox(
+                  m.task,
+                  hint: 'Replace water filter',
+                  capitalize: true,
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 90,
+                child: _TextBox(m.every, hint: 'Months', number: true),
+              ),
+              IconButton(
+                tooltip: 'Remove task',
+                icon: Icon(Icons.close, color: p.ink2),
+                onPressed: () => setState(() => _maint.removeAt(ix)),
+              ),
+            ],
+          ),
+        ),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton(
+          style: TextButton.styleFrom(
+            padding: EdgeInsets.zero,
+            foregroundColor: p.status[WarrantyState.documented],
+          ),
+          onPressed: () => setState(() => _maint.add(_MaintRow('', '6', null))),
+          child: const Text(
+            '+ Add a recurring task',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ),
+      ),
+    ];
+  }
+
+  /// The whole form, for editing an item.
+  List<Widget> _fullForm(BuildContext context) => [
+    _photoPicker(),
+    const SizedBox(height: 18),
+    _scanButtons(),
+    _statusLine(context),
+    _Section('What it is', [..._identityFields(), ..._placeFields()]),
+    _Section('How you got it', [..._purchaseFields(), _valueField()]),
+    _Section('Warranty', _warrantyFields()),
+    _Section('Proof you have', _proofFields()),
+    _Section('Maintenance', _maintenanceFields(context)),
+    _Section('Notes', [_TextBox(_notes, lines: 3, capitalize: true)]),
+  ];
+
+  /// One step of adding a new item.
+  List<Widget> _stepContent(BuildContext context) => switch (_step) {
+    0 => [
+      _scanButtons(receipt: false),
+      _statusLine(context),
+      const SizedBox(height: 16),
+      _photoPicker(),
+      const SizedBox(height: 16),
+      ..._identityFields(),
+    ],
+    1 => [
+      _scanButtons(barcode: false, label: false),
+      _statusLine(context),
+      const SizedBox(height: 16),
+      ..._purchaseFields(),
+    ],
+    2 => [
+      _Section('Proof you have', [
+        if (!_draft.evidence.any((e) => e.kind == EvidenceKind.receipt)) ...[
+          _scanButtons(barcode: false, label: false),
+          _statusLine(context),
+          const SizedBox(height: 12),
+        ],
+        ..._proofFields(),
+      ]),
+      _Section('Warranty', _warrantyFields()),
+    ],
+    _ => [
+      ..._placeFields(),
+      _MoreToggle(
+        open: _moreOpen,
+        onTap: () => setState(() => _moreOpen = !_moreOpen),
+      ),
+      if (_moreOpen) ...[
+        _valueField(),
+        _Section('Maintenance', _maintenanceFields(context)),
+        _Section('Notes', [_TextBox(_notes, lines: 3, capitalize: true)]),
+      ],
+    ],
+  };
+
+  Widget _stepHeader(BuildContext context) {
+    final p = context.palette;
+    final (title, sub) = _steps[_step];
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Step ${_step + 1} of ${_steps.length}',
+            style: labelStyle(context),
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: (_step + 1) / _steps.length,
+              minHeight: 4,
+              backgroundColor: p.rule,
+              color: p.ink,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            title,
+            style: const TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 22,
+              height: 1.2,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(sub, style: mutedStyle(context)),
+        ],
+      ),
+    );
+  }
+
+  /// Next on every step but the last; Add item or Save changes at the end.
+  void _primaryAction() {
+    if (_stepped && _step < _steps.length - 1) {
+      _next();
+    } else {
+      _save();
+    }
+  }
+
+  Widget _bottomBar(BuildContext context) {
+    final p = context.palette;
+    final last = !_stepped || _step == _steps.length - 1;
+    return Container(
+      decoration: BoxDecoration(
+        color: p.paper,
+        border: Border(top: BorderSide(color: p.rule, width: 0.5)),
+      ),
+      padding: const EdgeInsets.fromLTRB(gutter, 12, gutter, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: AppButton(
+              _stepped && _step > 0 ? 'Back' : 'Cancel',
+              kind: ButtonKind.ghost,
+              onPressed: _saving
+                  ? null
+                  : _stepped && _step > 0
+                  ? () => _goTo(_step - 1)
+                  : () => context.pop(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: AppButton(
+              _saving
+                  ? 'Saving…'
+                  : !last
+                  ? 'Next'
+                  : _existing == null
+                  ? 'Add item'
+                  : 'Save changes',
+              onPressed: _saving || _scanning ? null : _primaryAction,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final added = _added;
+    if (added != null) return _AddedScreen(added);
+
+    return PopScope<Object?>(
+      // The system back gesture steps back through the steps before leaving.
+      canPop: !_stepped || _step == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _step > 0) _goTo(_step - 1);
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(_existing == null ? 'Add an item' : 'Edit item'),
+          leading: IconButton(
+            icon: const Icon(Icons.close),
+            tooltip: 'Close',
+            onPressed: () => context.pop(),
+          ),
+        ),
+        body: SafeArea(
+          top: false,
+          child: Column(
+            children: [
+              Expanded(
+                child: ListView(
+                  // A fresh scroll position for each step.
+                  key: ValueKey(_stepped ? _step : -1),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: const EdgeInsets.fromLTRB(gutter, 8, gutter, 24),
+                  children: _stepped
+                      ? [_stepHeader(context), ..._stepContent(context)]
+                      : _fullForm(context),
+                ),
+              ),
+              _bottomBar(context),
+            ],
+          ),
         ),
       ),
     );
@@ -1927,4 +2152,284 @@ class _PhotoPill extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// − [3] + : how many of the same thing. Never below 1.
+class _QuantityStepper extends StatelessWidget {
+  const _QuantityStepper({required this.controller, required this.onChanged});
+  final TextEditingController controller;
+  final VoidCallback onChanged;
+
+  int get _value {
+    final n = int.tryParse(controller.text.trim());
+    return n == null || n < 1 ? 1 : n;
+  }
+
+  void _set(int n) {
+    controller.text = '${n < 1 ? 1 : n}';
+    onChanged();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.palette;
+    Widget button(IconData icon, String tip, VoidCallback? onTap) => IconButton(
+      tooltip: tip,
+      onPressed: onTap,
+      icon: Icon(icon, size: 20),
+      color: p.ink,
+      disabledColor: p.ink3,
+    );
+    return Container(
+      decoration: BoxDecoration(
+        color: p.card,
+        border: Border.all(color: p.rule),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          button(
+            Icons.remove,
+            'One fewer',
+            _value > 1 ? () => _set(_value - 1) : null,
+          ),
+          SizedBox(
+            width: 48,
+            child: TextField(
+              controller: controller,
+              onChanged: (_) => onChanged(),
+              textAlign: TextAlign.center,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              decoration: const InputDecoration(
+                isDense: true,
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                filled: false,
+                contentPadding: EdgeInsets.symmetric(vertical: 10),
+              ),
+            ),
+          ),
+          button(Icons.add, 'One more', () => _set(_value + 1)),
+        ],
+      ),
+    );
+  }
+}
+
+class _MoreToggle extends StatelessWidget {
+  const _MoreToggle({required this.open, required this.onTap});
+  final bool open;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.palette;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'More details',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                    Text(
+                      'Value now, maintenance and notes',
+                      style: labelStyle(context),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(open ? Icons.expand_less : Icons.expand_more, color: p.ink2),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown right after adding an item: what Owned now knows about it. Every status is
+/// the one the warranty and proof rules give; nothing is rounded up.
+class _AddedScreen extends StatelessWidget {
+  const _AddedScreen(this.it);
+  final Item it;
+
+  static const _proofText = {
+    ProofStrength.strong: 'Strong',
+    ProofStrength.moderate: 'Moderate',
+    ProofStrength.weak: 'Weak',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final w = warranty(it);
+    final proof = proofLevel(it);
+    final value = currentValue(it);
+    final rw = returnWindow(it);
+    final price = it.price ?? 0;
+
+    Widget row(String label, Widget child) => Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(width: 92, child: Text(label, style: mutedStyle(context))),
+          Expanded(child: child),
+        ],
+      ),
+    );
+    Widget body(String text, {bool bold = false}) => Text(
+      text,
+      style: TextStyle(
+        fontSize: 15,
+        fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
+      ),
+    );
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Added'),
+        leading: IconButton(
+          icon: const Icon(Icons.close),
+          tooltip: 'Close',
+          onPressed: () => context.pop(),
+        ),
+      ),
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(gutter, 16, gutter, 24),
+                children: [
+                  Center(child: ItemThumb(it, size: 120, radius: 14)),
+                  const SizedBox(height: 14),
+                  Text(
+                    it.quantity > 1 ? '${it.quantity} × ${it.name}' : it.name,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 22,
+                      height: 1.2,
+                    ),
+                  ),
+                  if (it.brand.isNotEmpty || it.model.isNotEmpty)
+                    Text(
+                      [it.brand, it.model].where((s) => s.isNotEmpty).join(' '),
+                      textAlign: TextAlign.center,
+                      style: mutedStyle(context),
+                    ),
+                  const SizedBox(height: 18),
+                  CardBox(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        row(
+                          'Warranty',
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              StatusChip(w.state),
+                              const SizedBox(height: 4),
+                              body(w.why),
+                              if (w.caveat != null) ...[
+                                const SizedBox(height: 4),
+                                Text(w.caveat!, style: labelStyle(context)),
+                              ],
+                              if (w.fix != null) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  'To make it exact: ${w.fix!.toLowerCase()}.',
+                                  style: labelStyle(context),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        row(
+                          'Proof',
+                          proof == null
+                              ? Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    body('None yet', bold: true),
+                                    Text(
+                                      'Add a receipt later from Edit. It stays usable without one.',
+                                      style: labelStyle(context),
+                                    ),
+                                  ],
+                                )
+                              : body(_proofText[proof]!, bold: true),
+                        ),
+                        if (price > 0)
+                          row(
+                            'Paid',
+                            body(
+                              it.quantity > 1
+                                  ? '${money(it.totalPrice)} (${it.quantity} × ${money(price)})'
+                                  : money(price),
+                              bold: true,
+                            ),
+                          ),
+                        if (value > 0)
+                          row(
+                            'Value now',
+                            body(
+                              (it.value ?? 0) > 0
+                                  ? '${money(value)} (your figure)'
+                                  : 'About ${money(value)}',
+                            ),
+                          ),
+                        if (rw != null && rw.days >= 0)
+                          row('Return by', body(formatDate(rw.end))),
+                        if (it.room.isNotEmpty) row('Room', body(it.room)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(gutter, 12, gutter, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: AppButton(
+                      'Add another',
+                      kind: ButtonKind.ghost,
+                      onPressed: () => context.pushReplacement('/edit'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: AppButton(
+                      'View item',
+                      onPressed: () =>
+                          context.pushReplacement('/item/${it.id}'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

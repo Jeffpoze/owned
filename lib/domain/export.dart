@@ -20,6 +20,8 @@ String inventoryCsv(List<Item> items, [DateTime? now]) {
     'acquisition',
     'acquired',
     'price',
+    'quantity',
+    'totalPrice',
     'retailer', //
     'originalPurchase',
     'value',
@@ -42,6 +44,8 @@ String inventoryCsv(List<Item> items, [DateTime? now]) {
       j['acquisition'],
       i.acquired,
       i.price, //
+      i.quantity,
+      i.totalPrice,
       i.retailer,
       i.originalPurchase,
       i.value,

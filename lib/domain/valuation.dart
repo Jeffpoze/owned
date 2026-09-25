@@ -55,11 +55,12 @@ const depreciationCurves = <Category, DepreciationCurve>{
 };
 
 /// What the item would likely sell for today, estimated from the price paid, when it
-/// was bought and its kind. Null when there's no price or no date to work from.
+/// was bought and its kind, for all of them when the record covers several.
+/// Null when there's no price or no date to work from.
 /// Items bought used were already second-hand, so they skip the first drop.
 /// Rounded to the nearest $5 (or $1 under $50): it's an estimate, not a quote.
 double? valueEstimate(Item it, [DateTime? now]) {
-  final price = it.price ?? 0;
+  final price = it.totalPrice ?? 0;
   final bought = parseDate(it.acquired);
   if (price <= 0 || bought == null) return null;
   final curve = depreciationCurves[it.category]!;

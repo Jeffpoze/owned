@@ -163,10 +163,10 @@ List<MaintenanceStatus> maintenanceDue(Item it, [DateTime? now]) {
   ];
 }
 
-/// For search ("over \$1000"): the value the user set, otherwise what they paid.
+/// For search ("over \$1000"): the value the user set, otherwise what they paid (for all of them).
 /// The Home total uses [currentValue] from valuation.dart instead.
 double estimatedValue(Item it) =>
-    (it.value ?? 0) > 0 ? it.value! : (it.price ?? 0);
+    (it.value ?? 0) > 0 ? it.value! : (it.totalPrice ?? 0);
 
 bool isMissingReceipt(Item it) =>
     !it.sold && it.isNew && !hasEvidence(it, ProofStrength.moderate);
