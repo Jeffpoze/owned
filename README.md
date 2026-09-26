@@ -2,6 +2,27 @@
 
 Know what you own. Know what's covered. Keep the proof.
 
+Owned is a digital inventory of everything your household owns: what each item is, what it cost, the proof you bought it, whether it's still under warranty, and when it needs maintenance. It's for the moment you need that information: a broken appliance, an insurance claim, a move, or selling something on.
+
+It isn't an AI app. It organizes your data well, using the phone's camera, barcode scanner and on-device text reading.
+
+## Features
+
+- **Scan to add.** Scan a barcode or photograph the model/serial label. Owned fills in the details and shows a picture of the actual product.
+- **Keep the proof.** Attach receipts, invoices and photos. Each item shows how strong its proof is (strong, moderate or weak). A missing receipt never blocks you; it only lowers confidence.
+- **Honest warranty status.** Verified, Documented, Estimated, Unknown or Expired, always counted from the original purchase. Owned never says you're covered when it doesn't actually know.
+- **Used and gifted items.** Records the original purchase and whether the warranty transfers to you.
+- **Quantities.** Log 3 light bulbs at one price each and Owned works out the total.
+- **Needs attention.** Warranties running out, return windows closing, receipts missing, maintenance due.
+- **Plain-language search.** "everything I bought from IKEA", "tvs in the living room", "no receipt", "over $1000".
+- **Handoff sheet and CSV export.** Pass an item's history to a buyer, or take all your data with you.
+
+## Status
+
+Early development and testing on iOS and Android. Free while it's being built. Nothing is sold and there are no paid tiers.
+
+---
+
 A Flutter app for iOS and Android. See `AGENTS.md` for the product spec and build order, and `prototype/owned.html` for the reference web prototype.
 
 ## Download
