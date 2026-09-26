@@ -65,3 +65,7 @@ dart run flutter_native_splash:create
 flutter analyze
 flutter test
 ```
+
+## License
+
+Copyright © 2026 Jefferson. All rights reserved. The code is public to view, but it may not be copied, modified or redistributed without permission.
